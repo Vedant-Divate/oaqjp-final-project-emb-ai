@@ -6,14 +6,45 @@ response as anger/disgust/fear/joy/sadness scores plus the dominant emotion.
 
 import requests
 
-WATSON_URL = (
-    'https://sn-watson-emotion.labs.skills.network'
-    '/v1/watson.runtime.nlp.v1/NlpService/EmotionPredict'
-)
-WATSON_HEADERS = {
-    "grpc-metadata-mm-model-id": "sentiment_aggregated-bert-workflow_lang_multi_stock"
-}
-EMOTIONS = ('anger', 'disgust', 'fear', 'joy', 'sadness')
+
+def emotion_detector(text_to_analyse):
+    """Detect the emotions in the given text via the Watson NLP library.
+
+    Returns a dictionary with anger, disgust, fear, joy and sadness scores
+    plus the dominant emotion. Returns all None values when the Watson
+    service rejects the input with status code 400.
+    """
+    url = 'https://sn-watson-emotion.labs.skills.network/v1/watson.runtime.nlp.v1/NlpService/EmotionPredict'
+    headers = {
+        "grpc-metadata-mm-model-id": "emotion_aggregated-workflow_lang_en_stock"
+    }
+    payload = {"raw_document": {"text": text_to_analyse}}
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+    except requests.exceptions.RequestException:
+        return _offline_scores(text_to_analyse)
+    if response.status_code == 400:
+        return {
+            'anger': None, 'disgust': None, 'fear': None,
+            'joy': None, 'sadness': None, 'dominant_emotion': None
+        }
+    response.raise_for_status()
+    emotions = response.json()['emotionPredictions'][0]['emotion']
+    anger = emotions['anger']
+    disgust = emotions['disgust']
+    fear = emotions['fear']
+    joy = emotions['joy']
+    sadness = emotions['sadness']
+    scores = {
+        'anger': anger, 'disgust': disgust, 'fear': fear,
+        'joy': joy, 'sadness': sadness
+    }
+    dominant_emotion = max(scores, key=scores.get)
+    return {
+        'anger': anger, 'disgust': disgust, 'fear': fear,
+        'joy': joy, 'sadness': sadness, 'dominant_emotion': dominant_emotion
+    }
+
 
 # Local keyword fallback used only when the Watson service is unreachable
 # (e.g. no network in a demo environment). The Watson call above remains the
@@ -27,45 +58,19 @@ _FALLBACK_KEYWORDS = {
 }
 
 
-def _blank_result():
-    """Return the null result used for invalid input."""
-    return {emotion: None for emotion in EMOTIONS} | {'dominant_emotion': None}
-
-
-def _fallback_scores(text):
+def _offline_scores(text_to_analyse):
     """Score emotions with keyword matching when Watson is unreachable."""
-    lowered = text.lower()
-    scores = {emotion: 0.0 for emotion in EMOTIONS}
+    lowered = text_to_analyse.lower()
+    scores = {'anger': 0.0, 'disgust': 0.0, 'fear': 0.0, 'joy': 0.0, 'sadness': 0.0}
     for emotion, keywords in _FALLBACK_KEYWORDS.items():
         hits = sum(1 for word in keywords if word in lowered)
         if hits:
             scores[emotion] = min(0.95, 0.5 + 0.15 * hits)
     if not any(scores.values()):
-        return _blank_result()
-    dominant = max(scores, key=scores.get)
-    return scores | {'dominant_emotion': dominant}
-
-
-def emotion_detector(text_to_analyze):
-    """Detect emotions in text via the Watson NLP library.
-
-    Returns a dict with anger/disgust/fear/joy/sadness scores and the
-    dominant emotion. Returns all-None values when the input is rejected
-    (HTTP 400) or empty.
-    """
-    if not text_to_analyze or not text_to_analyze.strip():
-        return _blank_result()
-    payload = {"raw_document": {"text": text_to_analyze}}
-    try:
-        response = requests.post(
-            WATSON_URL, json=payload, headers=WATSON_HEADERS, timeout=30
-        )
-    except requests.exceptions.RequestException:
-        return _fallback_scores(text_to_analyze)
-    if response.status_code == 400:
-        return _blank_result()
-    response.raise_for_status()
-    emotions = response.json()['emotionPredictions'][0]['emotion']
-    scores = {emotion: emotions[emotion] for emotion in EMOTIONS}
-    dominant = max(scores, key=scores.get)
-    return scores | {'dominant_emotion': dominant}
+        return {
+            'anger': None, 'disgust': None, 'fear': None,
+            'joy': None, 'sadness': None, 'dominant_emotion': None
+        }
+    dominant_emotion = max(scores, key=scores.get)
+    scores['dominant_emotion'] = dominant_emotion
+    return scores
